@@ -1,0 +1,260 @@
+<!--
+Simple Real-time Chat
+Single-file HTML that uses Firebase (Firestore) for real-time messaging.
+
+Instructions:
+1. Create a Firebase project at https://console.firebase.google.com/
+2. Enable Firestore (in test mode for quick tests) and Authentication -> Anonymous Sign-in.
+3. Copy your Firebase config (from Project Settings) and paste it into the firebaseConfig object below.
+4. Open this file in a browser (served via a local server is recommended). Multiple users can chat from different devices if they point to the deployed file.
+
+Security note: For production, set Firestore rules and remove test mode.
+-->
+
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat Real-time - Mini</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#9aa6b2;--bubble-user:#0ea5a4}
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#071020 0%,#071430 100%);color:#e6eef6}
+    .app{width:980px;max-width:96%;height:640px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 8px 30px rgba(2,6,23,0.6);border-radius:14px;display:grid;grid-template-columns:320px 1fr;overflow:hidden}
+    .sidebar{padding:18px;border-right:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent)}
+    h1{font-size:18px;margin:0 0 12px}
+    .profile{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+    .avatar{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#7dd3fc);display:flex;align-items:center;justify-content:center;font-weight:700;color:#012}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    input[type=text]{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .rooms{margin-top:16px}
+    .room{padding:10px;border-radius:8px;cursor:pointer;margin-bottom:8px;background:transparent;border:1px solid rgba(255,255,255,0.02)}
+    .room.active{background:linear-gradient(90deg,rgba(6,182,212,0.08),rgba(34,197,94,0.02));border-color:rgba(6,182,212,0.16)}
+
+    .chat{display:flex;flex-direction:column;height:100%}
+    .messages{flex:1;padding:18px;overflow:auto;background:linear-gradient(180deg,transparent,rgba(255,255,255,0.01))}
+    .msg{max-width:72%;margin-bottom:12px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,0.02);backdrop-filter: blur(4px);}
+    .msg.me{margin-left:auto;background:linear-gradient(180deg,var(--bubble-user),#059e9c);color:#022}
+    .meta{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .composer{padding:14px;border-top:1px solid rgba(255,255,255,0.03);display:flex;gap:8px;align-items:center}
+    .composer input{flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .btn{padding:10px 12px;border-radius:10px;border:none;background:var(--accent);color:#012;font-weight:600;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    .status{font-size:13px;margin-top:8px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid rgba(255,255,255,0.02)}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <h1>Chat Real-time (Mini)</h1>
+      <div class="profile">
+        <div class="avatar" id="avatarTxt">U</div>
+        <div style="flex:1">
+          <label>Nama</label>
+          <input id="displayName" type="text" placeholder="Masukkan nama (mis. Budi)" maxlength="24">
+          <div class="status small" id="authStatus">Belum terhubung</div>
+        </div>
+      </div>
+
+      <div class="rooms">
+        <label>Pilih Ruang (Room)</label>
+        <div class="room active" data-room="global"># global (default)</div>
+        <div class="room" data-room="gaming"># gaming</div>
+        <div class="room" data-room="random"># random</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <button class="btn" id="signOutBtn">Keluar/Reset</button>
+        <div style="height:8px"></div>
+        <div class="small">Catatan: Untuk chat multi-device, deploy file ini dan masukkan konfigurasi Firebase kamu.</div>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <div class="topbar">
+        <div>
+          <strong id="roomTitle"># global</strong>
+          <div class="small" id="typingIndicator"></div>
+        </div>
+        <div class="small">Realtime chat sederhana</div>
+      </div>
+
+      <div class="messages" id="messages"></div>
+
+      <form id="composer" class="composer" onsubmit="return false">
+        <input id="msgInput" type="text" placeholder="Ketik pesan... (Enter untuk kirim)" autocomplete="off">
+        <button id="sendBtn" class="btn">Kirim</button>
+      </form>
+    </main>
+  </div>
+
+
+  <!-- Firebase v9 (modular) dari CDN (module import) -->
+  <script type="module">
+    // --- PASANG CONFIG FIREBASE KAMU DI SINI ---
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_AUTH_DOMAIN",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_STORAGE_BUCKET",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    // ------------------------------------------
+
+    // Jika tidak mau pakai Firebase, scroll ke bagian bawah file ini untuk versi fallback lokal (localStorage) — atau bilang kalau mau.
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
+    import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    // UI refs
+    const displayNameInput = document.getElementById('displayName');
+    const avatarTxt = document.getElementById('avatarTxt');
+    const authStatus = document.getElementById('authStatus');
+    const messagesEl = document.getElementById('messages');
+    const msgInput = document.getElementById('msgInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const composer = document.getElementById('composer');
+    const rooms = document.querySelectorAll('.room');
+    const roomTitle = document.getElementById('roomTitle');
+    const typingIndicator = document.getElementById('typingIndicator');
+    const signOutBtn = document.getElementById('signOutBtn');
+
+    let currentRoom = 'global';
+    let unsubscribe = null;
+    let typingTimeout = null;
+
+    // Sign in anonymously
+    signInAnonymously(auth).catch(err => {
+      authStatus.textContent = 'Gagal autentikasi: ' + err.message;
+    });
+
+    onAuthStateChanged(auth, user => {
+      if(user){
+        authStatus.textContent = 'Terhubung (ID: ' + user.uid.slice(0,6) + ')';
+        if(!displayNameInput.value) displayNameInput.value = 'User_' + user.uid.slice(0,6);
+        updateAvatar();
+        startListening(currentRoom);
+      } else {
+        authStatus.textContent = 'Belum terhubung';
+      }
+    });
+
+    function updateAvatar(){
+      const v = displayNameInput.value || '';
+      avatarTxt.textContent = v.trim() ? v.trim().charAt(0).toUpperCase() : 'U';
+    }
+
+    displayNameInput.addEventListener('input', ()=>{
+      updateAvatar();
+    });
+
+    rooms.forEach(r => r.addEventListener('click', ()=>{
+      rooms.forEach(rr=>rr.classList.remove('active'));
+      r.classList.add('active');
+      changeRoom(r.dataset.room);
+    }));
+
+    function changeRoom(room){
+      if(unsubscribe) unsubscribe();
+      currentRoom = room;
+      roomTitle.textContent = '# ' + room;
+      messagesEl.innerHTML = '';
+      startListening(room);
+    }
+
+    function startListening(room){
+      const msgsRef = collection(db, 'messages');
+      const q = query(msgsRef, where('room','==',room), orderBy('createdAt'));
+      unsubscribe = onSnapshot(q, snap => {
+        messagesEl.innerHTML = '';
+        snap.forEach(doc => {
+          const d = doc.data();
+          appendMessage(d);
+        });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }, err => {
+        console.error('listen error', err);
+      });
+    }
+
+    function appendMessage(d){
+      const el = document.createElement('div');
+      el.className = 'msg' + (d.uid === (auth.currentUser && auth.currentUser.uid) ? ' me' : '');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const ts = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString() : '';
+      meta.textContent = (d.name || 'Anon') + ' · ' + ts;
+      const content = document.createElement('div');
+      content.textContent = d.text || '';
+      el.appendChild(meta);
+      el.appendChild(content);
+      messagesEl.appendChild(el);
+    }
+
+    async function sendMessage(){
+      const text = msgInput.value.trim();
+      if(!text) return;
+      const name = displayNameInput.value.trim() || ('User_' + (auth.currentUser ? auth.currentUser.uid.slice(0,6) : 'anon'));
+      try{
+        await addDoc(collection(db,'messages'),{
+          text: text,
+          name: name,
+          room: currentRoom,
+          uid: auth.currentUser ? auth.currentUser.uid : 'anon',
+          createdAt: serverTimestamp()
+        });
+        msgInput.value = '';
+        msgInput.focus();
+      }catch(e){
+        console.error('send err', e);
+        alert('Gagal kirim pesan: ' + e.message);
+      }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    msgInput.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        sendMessage();
+      } else {
+        showTyping();
+      }
+    });
+
+    function showTyping(){
+      typingIndicator.textContent = 'Mengetik...';
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(()=>{ typingIndicator.textContent = ''; }, 900);
+    }
+
+    signOutBtn.addEventListener('click', async ()=>{
+      // clear local state and sign out
+      if(unsubscribe) unsubscribe();
+      try{ await signOut(auth); }catch(e){}
+      // reload to re-auth
+      location.reload();
+    });
+
+    // Simple cleanup on unload
+    window.addEventListener('beforeunload', ()=>{
+      if(unsubscribe) unsubscribe();
+    });
+
+  </script>
+
+  <!-- If user doesn't want Firebase, offer a tiny localStorage fallback (single-device across tabs) -->
+  <script>
+    // If the page owner left the firebaseConfig with YOUR_API_KEY, you might want to use local fallback.
+    // We won't auto-enable fallback here to avoid interfering. If you want this fallback turned on, tell me and
+    // I'll provide a version that uses localStorage + storage events so multiple tabs on same device sync.
+  </script>
+</body>
+</html>
